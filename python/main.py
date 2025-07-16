@@ -1,4 +1,4 @@
-from decimal import Decimal
+import os
 from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 
 # Node access params
@@ -42,11 +42,11 @@ def main():
         blocks_mined = 0
         while True:
             client.generatetoaddress(1, miner_address)
-            info = miner.getwalletinfo()
-            if info['balance'] > 0:
+            balances = miner.getbalances()
+            if balances['mine']['trusted'] > 0:
                 break
-            blocks_mined +=1
-            # blocks have not yet mature a coinbase transaction which is  100 blocks have been recorded, this is why it may take up to 101 block to access the balance
+            blocks_mined +=1 #Coinbase rewards take 100 blocks to mature, so up to 101 blocks might be needed
+        
         #print Miner wallet balance
         print(f"Miner balance:", miner.getbalance())
 
@@ -114,15 +114,16 @@ def main():
         block = client.getblock(block_hash)
         block_height = block['height']
         # Write the data to ../out.txt in the specified format given in readme.md.
-        with open("out.txt", "w") as f:
+        out_path = os.path.join("..", "out.txt")
+        with open(out_path, "w") as f:
             f.write(f"{txid}\n")
             f.write(f"{input_address}\n")
-            f.write(f"{input_value:.8f}\n")
+            f.write(f"{float(input_value):.8f}\n")
             f.write(f"{trader_output_address}\n")
-            f.write(f"{trader_output_amount:.8f}\n")
+            f.write(f"{float(trader_output_amount):.8f}\n")
             f.write(f"{change_output_address}\n")
-            f.write(f"{change_amount:.8f}\n")
-            f.write(f"{fee:.8f}\n")
+            f.write(f"{float(change_amount):.8f}\n")
+            f.write(f"{float(fee):.8f}\n")
             f.write(f"{block_height}\n")
             f.write(f"{block_hash}\n")
         
