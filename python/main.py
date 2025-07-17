@@ -1,4 +1,5 @@
 import os
+import re
 from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 
 # Node access params
@@ -7,6 +8,19 @@ rpcpassword="password"
 rpcport = 18443
 RPC_URL = "http://alice:password@127.0.0.1:18443"
 
+
+def extract_address(script_pub_key):
+    # try standard wallet
+    addresses = script_pub_key.get('addresses')
+    if addresses:
+        return addresses[0]
+    # with fallback to descriptor
+    desc = script_pub_key.get('desc')
+    if desc:
+        match = re.search(r'addr\((.*?)\)', desc)
+        if match:
+            return match.group(1)
+    return 'unknown'
 def create_wallet_needed(client, wallet_name):
     try:
         client.createwallet(wallet_name)
@@ -74,12 +88,7 @@ def main():
         input_vout = input_tx['vout'][input_vout_index]
 
         input_value = input_vout['value']
-        # get address (use descriptor) with fallback logic
-        script_pubkey = input_vout['scriptPubKey']
-        input_address = (
-            script_pubkey.get('addresses', [None])[0]
-            or script_pubkey.get('address') or "unknown"
-        )
+        input_address = extract_address(input_vout['scriptPubKey'])
         
         #Find output
         vout = raw_tx['vout']
@@ -88,8 +97,8 @@ def main():
         
         # Get Trader and change output
         for out in vout:
-            addresses = out['scriptPubKey'].get('addresses', [])
-            if trader_address in addresses:
+            out_address = extract_address(out['scriptPubKey'])
+            if out_address == trader_address:
                 trader_output = out
             else:
                 change_output = out
@@ -98,7 +107,7 @@ def main():
             trader_output_address = trader_output['scriptPubKey'].get('addresses', ['unknown'])[0]
             trader_output_amount = trader_output['value']
         else:
-            trader_output_address = trader_output['scriptPubKey']['addresses'][0]
+            trader_output_address = extract_address(trader_output['scriptPubKey'])
             trader_output_amount = trader_output['value']
         # assign change from outputs
         if not change_output:
@@ -108,7 +117,7 @@ def main():
                     break
         if not trader_output or not change_output:
             raise ValueError("Cannot find trader or change output.Check transaction details")
-        change_output_address = change_output['scriptPubKey'].get('addresses',['unknown'])[0]
+        change_output_address = extract_address(change_output['scriptPubKey'])
         change_amount = change_output['value']
 
         #Calculate fee 
