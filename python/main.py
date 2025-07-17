@@ -91,17 +91,20 @@ def main():
             time.sleep(WAIT_INTERVAL)
         else:
             raise Exception ("Transaction not found or not confirmed in time")
-        # Find inputs
-        vin = raw_tx['vin'][0]
-        input_txid =vin['txid']
-        input_vout_index = vin ['vout']
+        # Find inputs -Sum all inputs
+        total_input_value = 0
+        input_addresses = []
+        for vin in raw_tx['vin']:
+            input_txid = vin['txid']
+            input_vout_index = vin['vout']
         # Get input transaction to fetch input amount and address
-        input_tx =client.getrawtransaction(input_txid, True)
-        input_vout = input_tx['vout'][input_vout_index]
+            input_tx =client.getrawtransaction(input_txid, True)
+            input_vout = input_tx['vout'][input_vout_index]
 
-        input_value = input_vout['value']
-        input_address = extract_address(input_vout['scriptPubKey'])
-        
+            total_input_value += input_vout['value']
+            input_address = extract_address(input_vout['scriptPubKey'])
+            input_addresses.append(input_address)
+        primary_input_address = input_address[0]
         #Find output
         vout = raw_tx['vout']
         trader_output = None
@@ -133,7 +136,7 @@ def main():
         change_amount = change_output['value']
 
         #Calculate fee 
-        fee = input_value - (change_amount + trader_output_amount)
+        fee = total_input_value - (change_amount + trader_output_amount)
 
         # get blockchain information
         block_hash = raw_tx['blockhash']
@@ -143,8 +146,8 @@ def main():
         out_path = os.path.join("..", "out.txt")
         with open(out_path, "w") as f:
             f.write(f"{txid}\n")
-            f.write(f"{input_address}\n")
-            f.write(f"{float(input_value):.8f}\n")
+            f.write(f"{primary_input_address}\n")
+            f.write(f"{float(total_input_value):.8f}\n")
             f.write(f"{trader_output_address}\n")
             f.write(f"{float(trader_output_amount):.8f}\n")
             f.write(f"{change_output_address}\n")
