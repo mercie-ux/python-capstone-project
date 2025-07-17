@@ -74,7 +74,12 @@ def main():
         input_vout = input_tx['vout'][input_vout_index]
 
         input_value = input_vout['value']
-        input_address = input_vout['scriptPubKey'].get('addresses', ['unknown'])[0]
+        # get address (use descriptor) with fallback logic
+        script_pubkey = input_vout['scriptPubKey']
+        input_address = (
+            script_pubkey.get('addresses', [None])[0]
+            or script_pubkey.get('address') or "unknown"
+        )
         
         #Find output
         vout = raw_tx['vout']
