@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 
 # Node access params
@@ -77,8 +78,19 @@ def main():
         # Mine 1 block to confirm the transaction.
         client.generatetoaddress(1, miner_address)
 
-        # Extract all required transaction details.
-        raw_tx = client.getrawtransaction(txid, True)
+        # Extract all required transaction details. Retry to get the transaction until it's indexed
+        MAX_RETRIES = 10
+        WAIT_INTERVAL = 0.5 # seconds
+        for i in range(MAX_RETRIES):
+            try:
+                raw_tx = client.getrawtransaction(txid, True)
+                if 'blockhash' in raw_tx:
+                    break
+            except JSONRPCException:
+                raw_tx = None
+            time.sleep(WAIT_INTERVAL)
+        else:
+            raise Exception ("Transaction not found or not confirmed in time")
         # Find inputs
         vin = raw_tx['vin'][0]
         input_txid =vin['txid']
