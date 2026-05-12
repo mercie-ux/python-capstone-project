@@ -104,7 +104,7 @@ def main():
             total_input_value += input_vout['value']
             input_address = extract_address(input_vout['scriptPubKey'])
             input_addresses.append(input_address)
-        primary_input_address = input_address[0]
+        primary_input_address = input_addresses[0]
         #Find output
         vout = raw_tx['vout']
         trader_output = None
