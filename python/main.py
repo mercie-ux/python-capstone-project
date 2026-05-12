@@ -3,155 +3,157 @@ import re
 import time
 from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 
-# Node access params
-rpcuser="alice"
-rpcpassword="password"
-rpcport = 18443
 RPC_URL = "http://alice:password@127.0.0.1:18443"
 
 
 def extract_address(script_pub_key):
-    # try standard wallet
-    addresses = script_pub_key.get('addresses')
+    # Newer Bitcoin Core versions
+    if "address" in script_pub_key:
+        return script_pub_key["address"]
+
+    # Older versions
+    addresses = script_pub_key.get("addresses")
     if addresses:
         return addresses[0]
-    # with fallback to descriptor
-    desc = script_pub_key.get('desc')
+
+    # Descriptor fallback
+    desc = script_pub_key.get("desc")
     if desc:
         match = re.search(r'addr\((.*?)\)', desc)
         if match:
             return match.group(1)
-    return 'unknown'
-def create_wallet_needed(client, wallet_name):
+
+    return "unknown"
+
+
+def ensure_wallet_loaded(client, wallet_name):
+    loaded_wallets = client.listwallets()
+
+    if wallet_name in loaded_wallets:
+        print(f"{wallet_name} already loaded")
+        return
+
     try:
+        client.loadwallet(wallet_name)
+        print(f"{wallet_name} loaded")
+    except JSONRPCException:
         client.createwallet(wallet_name)
-        print(f"Wallet '{wallet_name}' created.")
-    except JSONRPCException as e:
-        if e.error['code'] == -4:
-            # Wallet file exists but may not be loaded — try loading it
-            try:
-                client.loadwallet(wallet_name)
-                print(f"Wallet '{wallet_name}' loaded.")
-            except JSONRPCException as le:
-                if le.error['code'] == -35:
-                    print(f"Wallet '{wallet_name}' already loaded.")
-                else:
-                    raise
-        else:
-            raise
+        print(f"{wallet_name} created")
+
 
 def main():
     try:
-        # General client for non-wallet-specific commands
+        # General RPC client
         client = AuthServiceProxy(RPC_URL)
 
-        # Get blockchain info
-        blockchain_info = client.getblockchaininfo()
-        print("Blockchain Info:", blockchain_info)
+        # Ensure wallets exist and are loaded
+        ensure_wallet_loaded(client, "Miner")
+        ensure_wallet_loaded(client, "Trader")
 
-        # Create/Load the wallets, named 'Miner' and 'Trader'. Have logic to optionally create/load them if they do not exist or are not loaded already.
-        #create/load wallets
-        create_wallet_needed(client, "Miner")
-        create_wallet_needed(client, "Trader")
-
-        # wallet rpc interface
+        # Wallet RPC interfaces
         miner = AuthServiceProxy(f"{RPC_URL}/wallet/Miner")
         trader = AuthServiceProxy(f"{RPC_URL}/wallet/Trader")
 
-        # Generate spendable balances in the Miner wallet. Determine how many blocks need to be mined.
-        # generate miner address
+        # Generate mining address
         miner_address = miner.getnewaddress("Mining Reward")
-        #inital block count
-        blocks_mined = 0
-        while True:
+
+        # Mine enough blocks for mature coinbase rewards
+        while miner.getbalance() < 150:
             client.generatetoaddress(1, miner_address)
-            balances = miner.getbalances()
-            if balances['mine']['trusted'] > 0:
-                break
-            blocks_mined +=1 #Coinbase rewards take 100 blocks to mature, so up to 101 blocks might be needed
-        
-        #print Miner wallet balance
-        print(f"Miner balance:", miner.getbalance())
 
-        # Load the Trader wallet and generate a new address.
-        trader_address = trader.getnewaddress("Received")
+        print("Miner balance:", miner.getbalance())
 
-        # Send 20 BTC from Miner to Trader.
+        # Trader receive address
+        trader_address = trader.getnewaddress("Trader Receive")
+
+        # Send BTC
         txid = miner.sendtoaddress(trader_address, 20)
 
-        # Check the transaction in the mempool.
-        mempool_tx = client.getmempoolentry(txid)
-        print("Mempool transaction:", mempool_tx)
+        print("Transaction sent:", txid)
 
-        # Mine 1 block to confirm the transaction.
+        # Confirm transaction
         client.generatetoaddress(1, miner_address)
 
-        # Extract all required transaction details. Retry to get the transaction until it's indexed
+        # Retry until transaction is indexed and confirmed
         MAX_RETRIES = 10
-        WAIT_INTERVAL = 0.5 # seconds
-        for i in range(MAX_RETRIES):
+        WAIT_INTERVAL = 0.5
+
+        wallet_tx = None
+
+        for _ in range(MAX_RETRIES):
             try:
-                raw_tx = client.getrawtransaction(txid, True)
-                if 'blockhash' in raw_tx:
+                wallet_tx = miner.gettransaction(txid, True)
+
+                if wallet_tx.get("confirmations", 0) > 0:
                     break
+
             except JSONRPCException:
-                raw_tx = None
+                pass
+
             time.sleep(WAIT_INTERVAL)
-        else:
-            raise Exception ("Transaction not found or not confirmed in time")
-        # Find inputs -Sum all inputs
+
+        if wallet_tx is None:
+            raise Exception("Transaction not found")
+
+        decoded_tx = wallet_tx["decoded"]
+
+        # Transaction metadata
+        block_hash = wallet_tx["blockhash"]
+        block_height = wallet_tx["blockheight"]
+        fee = abs(wallet_tx["fee"])
+
+        # Inputs
+        vin = decoded_tx["vin"]
+
         total_input_value = 0
         input_addresses = []
-        for vin in raw_tx['vin']:
-            input_txid = vin['txid']
-            input_vout_index = vin['vout']
-        # Get input transaction to fetch input amount and address
-            input_tx =client.getrawtransaction(input_txid, True)
-            input_vout = input_tx['vout'][input_vout_index]
 
-            total_input_value += input_vout['value']
-            input_address = extract_address(input_vout['scriptPubKey'])
+        for tx_input in vin:
+            input_txid = tx_input["txid"]
+            input_vout_index = tx_input["vout"]
+
+            prev_tx = client.getrawtransaction(input_txid, True)
+            prev_vout = prev_tx["vout"][input_vout_index]
+
+            total_input_value += prev_vout["value"]
+
+            input_address = extract_address(prev_vout["scriptPubKey"])
             input_addresses.append(input_address)
+
         primary_input_address = input_addresses[0]
-        #Find output
-        vout = raw_tx['vout']
+
+        # Outputs
         trader_output = None
         change_output = None
-        
-        # Get Trader and change output
-        for out in vout:
-            out_address = extract_address(out['scriptPubKey'])
+
+        for out in decoded_tx["vout"]:
+            out_address = extract_address(out["scriptPubKey"])
+
             if out_address == trader_address:
                 trader_output = out
             else:
                 change_output = out
-        if not trader_output:
-            trader_output =max(vout, key=lambda o: o['value'])
-            trader_output_address = trader_output['scriptPubKey'].get('addresses', ['unknown'])[0]
-            trader_output_amount = trader_output['value']
-        else:
-            trader_output_address = extract_address(trader_output['scriptPubKey'])
-            trader_output_amount = trader_output['value']
-        # assign change from outputs
-        if not change_output:
-            for out in vout:
-                if out != trader_output:
-                    change_output = out
-                    break
-        if not trader_output or not change_output:
-            raise ValueError("Cannot find trader or change output.Check transaction details")
-        change_output_address = extract_address(change_output['scriptPubKey'])
-        change_amount = change_output['value']
 
-        #Calculate fee 
-        fee = total_input_value - (change_amount + trader_output_amount)
+        if trader_output is None or change_output is None:
+            raise Exception("Could not determine outputs")
 
-        # get blockchain information
-        block_hash = raw_tx['blockhash']
-        block = client.getblock(block_hash)
-        block_height = block['height']
-        # Write out.txt to project root, regardless of where the script is invoked from.
-        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "out.txt")
+        trader_output_address = extract_address(
+            trader_output["scriptPubKey"]
+        )
+        trader_output_amount = trader_output["value"]
+
+        change_output_address = extract_address(
+            change_output["scriptPubKey"]
+        )
+        change_amount = change_output["value"]
+
+        # Write results
+        out_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "out.txt"
+        )
+
         with open(out_path, "w") as f:
             f.write(f"{txid}\n")
             f.write(f"{primary_input_address}\n")
@@ -163,10 +165,12 @@ def main():
             f.write(f"{float(fee):.8f}\n")
             f.write(f"{block_height}\n")
             f.write(f"{block_hash}\n")
-        
+
         print("Transaction details written to out.txt")
+
     except Exception as e:
-        print("Error occurred: {}".format(e))
+        print(f"Error occurred: {e}")
+
 
 if __name__ == "__main__":
     main()
