@@ -28,7 +28,15 @@ def create_wallet_needed(client, wallet_name):
         print(f"Wallet '{wallet_name}' created.")
     except JSONRPCException as e:
         if e.error['code'] == -4:
-            print(f"Wallet '{wallet_name}' already exists")
+            # Wallet file exists but may not be loaded — try loading it
+            try:
+                client.loadwallet(wallet_name)
+                print(f"Wallet '{wallet_name}' loaded.")
+            except JSONRPCException as le:
+                if le.error['code'] == -35:
+                    print(f"Wallet '{wallet_name}' already loaded.")
+                else:
+                    raise
         else:
             raise
 
@@ -142,8 +150,8 @@ def main():
         block_hash = raw_tx['blockhash']
         block = client.getblock(block_hash)
         block_height = block['height']
-        # Write the data to ../out.txt in the specified format given in readme.md.
-        out_path = os.path.join("..", "out.txt")
+        # Write out.txt to project root, regardless of where the script is invoked from.
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "out.txt")
         with open(out_path, "w") as f:
             f.write(f"{txid}\n")
             f.write(f"{primary_input_address}\n")
